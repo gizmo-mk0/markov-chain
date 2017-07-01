@@ -3,7 +3,7 @@
 module Main where
 
 import Control.Monad (liftM)
-import Data.Char (isAlphaNum)
+-- import Data.Char (isAlphaNum)
 import Data.List (intersperse)
 import System.Random (randomRs, getStdGen)
 
@@ -45,7 +45,7 @@ addSentence :: Memory -> T.Text -> Memory
 addSentence st = foldl addWord st
               . (\l -> zipWith (\a b -> [a,b]) l (tail l))
               . (Start:) . (++ [End]) . map Element
-              . T.split (not . isAlphaNum) . T.toLower
+              . T.split (== ' ') . T.toLower
 
 addWord :: Memory -> [MarkovWord] -> Memory
 addWord st (_:[])    = st
@@ -58,7 +58,7 @@ generateChain :: [Float] -> Probability -> MarkovWord -> [MarkovWord]
 generateChain _ _ End = []
 generateChain (p:ps) pr w =
   let t = select p (pr M.! w)
-  in  t : generateChain ps pr t
+  in  w : generateChain ps pr t
 
 select :: Float -> M.Map MarkovWord Float -> MarkovWord
 select p pr = select' p (M.toList pr)
@@ -74,4 +74,4 @@ main :: IO ()
 main = do
   probs <- liftM (buildProbability . buildMemory . T.splitOn "." . T.pack) $ readFile "test.txt"
   stdGen <- getStdGen
-  putStrLn . T.unpack . showChain $ generateChain (randomRs (0, 1) stdGen) probs (Element "tisztelt")
+  putStrLn . T.unpack . showChain $ generateChain (randomRs (0, 1) stdGen) probs Start -- (Element "java")
