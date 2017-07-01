@@ -4,54 +4,74 @@ module Main where
 
 import Control.Monad (liftM)
 import Data.Char (isAlphaNum)
-import System.Random (randomRs, mkStdGen)
+import Data.List (intersperse)
+import System.Random (randomRs, getStdGen)
 
 import qualified Data.Map.Lazy    as M
 import qualified Data.Text.Lazy   as T
 
-type Statistic = M.Map T.Text (M.Map (Maybe T.Text) Int)
+data MarkovElement a = Start | End | Element a deriving (Eq, Ord)
+type MarkovWord = MarkovElement T.Text
+type Memory = M.Map MarkovWord (M.Map MarkovWord Int)
+type Probability = M.Map MarkovWord (M.Map MarkovWord Float)
 
-type Probability = M.Map T.Text (M.Map (Maybe T.Text) Float)
+instance Functor MarkovElement where
+  fmap _ Start       = Start
+  fmap _ End         = End
+  fmap f (Element e) = Element (f e)
 
-buildStatistic :: [T.Text] -> Statistic
-buildStatistic = foldl addSentence emptyStatistic
+instance (Show a) => Show (MarkovElement a) where
+  show Start = "<<Start>>"
+  show End   = "<<End>>"
+  show (Element a) = show a
 
-buildProbability :: Statistic -> Probability
+printMarkovWord :: MarkovWord -> T.Text
+printMarkovWord Start = ""
+printMarkovWord End   = ""
+printMarkovWord (Element t) = t
+
+buildMemory :: [T.Text] -> Memory
+buildMemory = foldl addSentence emptyMemory
+
+buildProbability :: Memory -> Probability
 buildProbability = M.map buildProbability'
 
-buildProbability' :: M.Map (Maybe T.Text) Int -> M.Map (Maybe T.Text) Float
-buildProbability' m = M.map ((/ (fromIntegral sum)) . fromIntegral) m
+buildProbability' :: M.Map MarkovWord Int -> M.Map MarkovWord Float
+buildProbability' m = M.map ((/ (fromIntegral sumOfElems)) . fromIntegral) m
   where
-    sum = M.foldl (+) 0 m
+    sumOfElems = M.foldl (+) 0 m
 
-addSentence :: Statistic -> T.Text -> Statistic
-addSentence st = foldl addWord st . (\l -> zipWith (\a b -> [a,b]) l (tail l)) . T.split (not . isAlphaNum) . T.toLower
+addSentence :: Memory -> T.Text -> Memory
+addSentence st = foldl addWord st
+              . (\l -> zipWith (\a b -> [a,b]) l (tail l))
+              . (Start:) . (++ [End]) . map Element
+              . T.split (not . isAlphaNum) . T.toLower
 
-addWord :: Statistic -> [T.Text] -> Statistic
-addWord st (w1:[])    = M.insertWith (M.unionWith (+)) w1 (M.singleton Nothing   1) st
-addWord st (w1:w2:[]) = M.insertWith (M.unionWith (+)) w1 (M.singleton (Just w2) 1) st
+addWord :: Memory -> [MarkovWord] -> Memory
+addWord st (_:[])    = st
+addWord st (w1:w2:[]) = M.insertWith (M.unionWith (+)) w1 (M.singleton w2 1) st
 
-emptyStatistic :: Statistic
-emptyStatistic = M.empty
+emptyMemory :: Memory
+emptyMemory = M.empty
 
-generateString :: [Float] -> Probability -> T.Text -> T.Text
-generateString (p:ps) pr str =
-  if str `M.member` pr
-    then case select p (pr M.! str) of
-          Just t -> t `T.append` T.pack " " `T.append` generateString ps pr t
-          Nothing -> str
-    -- else error $ "No key found: " ++ T.unpack str -- str
-    else str
+generateChain :: [Float] -> Probability -> MarkovWord -> [MarkovWord]
+generateChain _ _ End = []
+generateChain (p:ps) pr w =
+  let t = select p (pr M.! w)
+  in  t : generateChain ps pr t
 
-select :: Float -> M.Map (Maybe T.Text) Float -> Maybe T.Text
+select :: Float -> M.Map MarkovWord Float -> MarkovWord
 select p pr = select' p (M.toList pr)
   where
-    select' :: Float -> [(Maybe T.Text, Float)] -> Maybe T.Text
-    select' p ((t, pr):lst) | p > pr    = select' (p - pr) lst
-                            | otherwise = t
+    select' :: Float -> [(MarkovWord, Float)] -> MarkovWord
+    select' p' ((t, pr'):lst) | p' > pr'    = select' (p' - pr') lst
+                              | otherwise = t
+
+showChain :: [MarkovWord] -> T.Text
+showChain = T.concat . intersperse " " . map printMarkovWord
 
 main :: IO ()
 main = do
-  probs <- liftM (buildProbability . buildStatistic . T.splitOn "." . T.pack) $ readFile "test.txt"
-  putStrLn . T.unpack $ generateString (randomRs (0, 1) (mkStdGen 234)) probs "highly"
-  -- putStrLn $ show probs
+  probs <- liftM (buildProbability . buildMemory . T.splitOn "." . T.pack) $ readFile "test.txt"
+  stdGen <- getStdGen
+  putStrLn . T.unpack . showChain $ generateChain (randomRs (0, 1) stdGen) probs (Element "tisztelt")
